@@ -17,20 +17,13 @@ Visualise watchlist activity and highlight GC using Streamlit
 X Create portfolio table
 
 Create portfolio_history table
-	trade_date (check? same as watchlist_history)
-	symbol
-	price
 
 Create consolidated_portfolio view
-	symbol
-	avg_buy_price
-	price
-	pl_per
-	pl_dol	
 
 Create update_portfolio python script
 	load current price into portfolio and portfolio history
 	update max_price field on portfolio table
+	schedule once/day run
 
 Create sell_recommendations view
 
