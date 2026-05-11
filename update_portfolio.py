@@ -1,180 +1,195 @@
 #!/usr/bin/env python3
-"""
-Script to:
-- Fetch current prices for all held symbols (sell_date IS NULL) using yfinance.
-- Insert today's date, symbol, and price into portfolio_history.
-- Update portfolio.price to the current price for each held row.
-- Update portfolio.max_price to max(current_price, existing max_price) for each held row.
-"""
 
-import pymysql
+import mysql.connector
 import yfinance as yf
 from datetime import date
-import logging
+from decimal import Decimal
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-
-# Database connection parameters
+# Database configuration
 DB_CONFIG = {
-    'host': 'localhost',
-    'user': 'scuser',
-    'password': 'password',
-    'database': 'sc',
-    'charset': 'utf8mb4',
-    'cursorclass': pymysql.cursors.DictCursor
+    "host": "localhost",
+    "user": "scuser",
+    "password": "password",
+    "database": "sc"
 }
 
-def get_db_connection():
-    """Create and return a database connection."""
-    try:
-        conn = pymysql.connect(**DB_CONFIG)
-        logging.info("Connected to MariaDB database 'sc'")
-        return conn
-    except pymysql.MySQLError as e:
-        logging.error(f"Database connection failed: {e}")
-        raise
-
-def get_held_symbols(conn):
-    """
-    Fetch unique symbol values from portfolio where sell_date IS NULL.
-    These represent currently held positions.
-    """
-    sql = """
-        SELECT DISTINCT symbol
-        FROM portfolio
-        WHERE sell_date IS NULL
-          AND symbol IS NOT NULL
-          AND symbol != ''
-    """
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(sql)
-            rows = cursor.fetchall()
-            symbols = [row['symbol'] for row in rows]
-            logging.info(f"Found {len(symbols)} unique held symbols: {symbols}")
-            return symbols
-    except pymysql.MySQLError as e:
-        logging.error(f"Failed to fetch symbols: {e}")
-        raise
 
 def get_current_price(symbol):
     """
-    Retrieve the current price for a given symbol using yfinance.
-    Returns the latest closing price or None if unavailable.
+    Retrieve the current stock price using yfinance.
     """
     try:
         ticker = yf.Ticker(symbol)
-        # Get the most recent day's data
-        hist = ticker.history(period="1d")
-        if hist.empty:
-            logging.warning(f"No price data found for symbol: {symbol}")
-            return None
-        current_price = hist['Close'].iloc[-1]
-        return round(current_price, 2)
+
+        # Try fast_info first
+        current_price = ticker.fast_info.get("lastPrice")
+
+        # Fallback to history if needed
+        if current_price is None:
+            hist = ticker.history(period="1d")
+            if not hist.empty:
+                current_price = hist["Close"].iloc[-1]
+
+        if current_price is not None:
+            return round(float(current_price), 2)
+
     except Exception as e:
-        logging.error(f"Error fetching price for {symbol}: {e}")
-        return None
+        print(f"Error retrieving price for {symbol}: {e}")
 
-def insert_portfolio_history(conn, symbol, price, trade_date):
-    """Insert a record into the portfolio_history table."""
-    sql = """
-        INSERT INTO portfolio_history (trade_date, symbol, price)
-        VALUES (%s, %s, %s)
-    """
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(sql, (trade_date, symbol, price))
-        conn.commit()
-        logging.info(f"Inserted history: {trade_date}, {symbol}, {price}")
-    except pymysql.MySQLError as e:
-        logging.error(f"Failed to insert history for {symbol}: {e}")
-        conn.rollback()
+    return None
 
-def update_current_price(conn, symbol, current_price):
-    """
-    Update portfolio.price for all held rows of the given symbol to the current price.
-    """
-    sql = """
-        UPDATE portfolio
-        SET price = %s
-        WHERE symbol = %s
-          AND sell_date IS NULL
-    """
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(sql, (current_price, symbol))
-            affected = cursor.rowcount
-        conn.commit()
-        if affected > 0:
-            logging.info(f"Updated price for {symbol} to {current_price} - {affected} row(s)")
-        else:
-            logging.debug(f"No rows updated for {symbol} (no held positions?)")
-    except pymysql.MySQLError as e:
-        logging.error(f"Failed to update price for {symbol}: {e}")
-        conn.rollback()
 
-def update_max_price(conn, symbol, current_price):
+def update_portfolio_prices(cursor, conn):
     """
-    Update portfolio.max_price for all held rows of the given symbol.
-    Sets max_price = max(existing max_price, current_price).
-    Handles NULL max_price by treating it as 0 (so it becomes current_price).
+    Update current prices and max prices for open positions.
     """
-    sql = """
-        UPDATE portfolio
-        SET max_price = GREATEST(COALESCE(max_price, 0), %s)
-        WHERE symbol = %s
-          AND sell_date IS NULL
+
+    query = """
+        SELECT name, symbol, price, max_price
+        FROM portfolio
+        WHERE sell_date IS NULL
     """
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(sql, (current_price, symbol))
-            affected = cursor.rowcount
-        conn.commit()
-        if affected > 0:
-            logging.info(f"Updated max_price for {symbol} to {current_price} (if greater) - {affected} row(s)")
-        else:
-            logging.debug(f"No rows updated for {symbol} (no held positions?)")
-    except pymysql.MySQLError as e:
-        logging.error(f"Failed to update max_price for {symbol}: {e}")
-        conn.rollback()
+
+    cursor.execute(query)
+    rows = cursor.fetchall()
+
+    for row in rows:
+        name, symbol, old_price, max_price = row
+
+        current_price = get_current_price(symbol)
+
+        if current_price is None:
+            print(f"Skipping {symbol} - no price found")
+            continue
+
+        print(f"Updating {symbol}: {old_price} -> {current_price}")
+
+        # Update price
+        update_query = """
+            UPDATE portfolio
+            SET price = %s
+            WHERE name = %s
+              AND symbol = %s
+              AND sell_date IS NULL
+        """
+
+        cursor.execute(update_query, (
+            current_price,
+            name,
+            symbol
+        ))
+
+        # Update max_price if current price is higher
+        if max_price is None or Decimal(str(current_price)) > max_price:
+
+            max_update_query = """
+                UPDATE portfolio
+                SET max_price = %s
+                WHERE name = %s
+                  AND symbol = %s
+                  AND sell_date IS NULL
+            """
+
+            cursor.execute(max_update_query, (
+                current_price,
+                name,
+                symbol
+            ))
+
+            print(f"Updated max_price for {symbol} to {current_price}")
+
+    conn.commit()
+
+
+def insert_portfolio_history(cursor, conn):
+    """
+    Insert daily portfolio history records.
+    """
+
+    query = """
+        SELECT
+            name,
+            symbol,
+            SUM(quantity) AS total_quantity
+        FROM portfolio
+        GROUP BY name, symbol
+    """
+
+    cursor.execute(query)
+    rows = cursor.fetchall()
+
+    today = date.today()
+
+    for row in rows:
+        name, symbol, total_quantity = row
+
+        current_price = get_current_price(symbol)
+
+        if current_price is None:
+            print(f"Skipping history insert for {symbol} - no price found")
+            continue
+
+        value = round(float(total_quantity) * current_price, 2)
+
+        insert_query = """
+            INSERT INTO portfolio_history
+            (
+                trade_date,
+                name,
+                symbol,
+                price,
+                value
+            )
+            VALUES (%s, %s, %s, %s, %s)
+        """
+
+        cursor.execute(insert_query, (
+            today,
+            name,
+            symbol,
+            current_price,
+            value
+        ))
+
+        print(
+            f"Inserted history: "
+            f"{today}, {name}, {symbol}, "
+            f"price={current_price}, value={value}"
+        )
+
+    conn.commit()
+
 
 def main():
-    """Main workflow: fetch held symbols, get prices, insert history, update price and max_price."""
-    conn = None
+
     try:
-        conn = get_db_connection()
-        symbols = get_held_symbols(conn)
+        conn = mysql.connector.connect(**DB_CONFIG)
+        cursor = conn.cursor()
 
-        if not symbols:
-            logging.info("No held symbols found. Exiting.")
-            return
+        print("Connected to database")
 
-        today = date.today()
-        for symbol in symbols:
-            current_price = get_current_price(symbol)
-            if current_price is None:
-                logging.warning(f"Skipping {symbol} due to missing price.")
-                continue
+        # Step 1-3
+        update_portfolio_prices(cursor, conn)
 
-            # 1. Insert into portfolio_history
-            insert_portfolio_history(conn, symbol, current_price, today)
+        # Step 4
+        insert_portfolio_history(cursor, conn)
 
-            # 2. Update portfolio.price with the current price
-            update_current_price(conn, symbol, current_price)
+        print("Processing completed successfully")
 
-            # 3. Update portfolio.max_price only if current price is greater
-            update_max_price(conn, symbol, current_price)
+    except mysql.connector.Error as err:
+        print(f"Database error: {err}")
 
     except Exception as e:
-        logging.error(f"Script failed: {e}")
+        print(f"Unexpected error: {e}")
+
     finally:
-        if conn:
+        try:
+            cursor.close()
             conn.close()
-            logging.info("Database connection closed.")
+            print("Database connection closed")
+        except:
+            pass
+
 
 if __name__ == "__main__":
     main()

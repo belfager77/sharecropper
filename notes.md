@@ -16,9 +16,11 @@ Visualise watchlist activity and highlight GC using Streamlit
 
 X Create portfolio table
 
-Create portfolio_history table
+X Create portfolio_history table
 
-Create consolidated_portfolio view
+Modify portfolio_history table to show share values and add portfolio name
+
+X Create consolidated_portfolio view
 
 Create update_portfolio python script
 	load current price into portfolio and portfolio history
