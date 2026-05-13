@@ -18,16 +18,14 @@ X Create portfolio table
 
 X Create portfolio_history table
 
-Modify portfolio_history table to show share values and add portfolio name
+X Modify portfolio_history table to show share values and add portfolio name
 
 X Create consolidated_portfolio view
 
 Create update_portfolio python script
-	load current price into portfolio and portfolio history
-	update max_price field on portfolio table
 	schedule once/day run
 
-Create sell_recommendations view
+X Create sell_recommendations view
 
 Visualise portfolio activity with Streamlit
 	portfolio status
