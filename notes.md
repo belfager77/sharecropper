@@ -10,9 +10,11 @@ X Create watchlist_history table
 Create update_watchlist python script
 	schedule once/day run
 
-Create golden_cross view
+X Create golden_cross view
 
 Visualise watchlist activity and highlight GC using Streamlit
+	Fix this error:
+	Please replace `use_container_width` with `width`
 
 X Create portfolio table
 
@@ -26,9 +28,5 @@ Create update_portfolio python script
 	schedule once/day run
 
 X Create sell_recommendations view
-
-Visualise portfolio activity with Streamlit
-	portfolio status
-	show sell recommendations
 
 Scheduled job for daily database backup
